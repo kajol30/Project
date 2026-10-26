@@ -1,0 +1,38 @@
+name: solve
+on:
+  workflow_dispatch:
+    inputs:
+      tag: {required: true}
+permissions:
+  contents: write
+jobs:
+  s:
+    runs-on: ubuntu-latest
+    timeout-minutes: 16
+    strategy:
+      fail-fast: false
+      matrix:
+        i: [0,1,2,3,4,5,6,7,8,9]
+    steps:
+      - uses: actions/checkout@v4
+      - name: build
+        run: |
+          git clone --depth 1 https://github.com/arminbiere/kissat.git k && cd k && ./configure --quiet >/dev/null && make -j4 >/dev/null 2>&1 && cp build/kissat ../ks && cd ..
+          ls -la ks
+      - name: run
+        run: |
+          xz -dk cnf.xz && mv cnf cnf.txt || true
+          N=$(nproc); echo cores $N
+          for j in $(seq 0 $((N-1))); do
+            S=$(( ${{ matrix.i }}*100 + j ))
+            case $((j%4)) in 0) O="--sat";; 1) O="--sat --target=2";; 2) O="";; 3) O="--unsat=false --walkinitially=true";; esac
+            ( ./ks -q --seed=$S $O cnf.txt > out_$j.txt 2>&1 || true ) &
+          done
+          while true; do
+            for f in out_*.txt; do if grep -q "^s SATISFIABLE" $f; then cp $f sol.txt; break 2; fi; done
+            sleep 1
+          done
+          pkill ks || true
+          git config user.email a@b.c; git config user.name bot
+          git checkout -b sol-${{ inputs.tag }}-${{ matrix.i }}
+          git add sol.txt; git commit -qm sol; git push -q origin HEAD
