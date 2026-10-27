@@ -12,27 +12,30 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        i: [0,1,2,3,4,5,6,7,8,9]
+        i: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19]
     steps:
       - uses: actions/checkout@v4
-      - name: build
-        run: |
-          git clone --depth 1 https://github.com/arminbiere/kissat.git k && cd k && ./configure --quiet >/dev/null && make -j4 >/dev/null 2>&1 && cp build/kissat ../ks && cd ..
-          ls -la ks
       - name: run
         run: |
-          xz -dk cnf.xz && mv cnf cnf.txt || true
+          cat cnf.xz.* > cnf.xz && xz -dc cnf.xz > cnf.txt
+          gcc -O3 -march=native -o ps5 ps5.c -lm
           N=$(nproc); echo cores $N
-          for j in $(seq 0 $((N-1))); do
-            S=$(( ${{ matrix.i }}*100 + j ))
-            case $((j%4)) in 0) O="--sat";; 1) O="--sat --target=2";; 2) O="";; 3) O="--unsat=false --walkinitially=true";; esac
-            ( ./ks -q --seed=$S $O cnf.txt > out_$j.txt 2>&1 || true ) &
-          done
-          while true; do
-            for f in out_*.txt; do if grep -q "^s SATISFIABLE" $f; then cp $f sol.txt; break 2; fi; done
+          I=${{ matrix.i }}
+          if [ $((I%4)) -eq 3 ]; then
+            git clone --depth 1 https://github.com/arminbiere/kissat.git k && (cd k && ./configure --quiet >/dev/null && make -j$N >/dev/null 2>&1) && cp k/build/kissat ks
+            for j in $(seq 0 $((N-1))); do ( ./ks -q --seed=$((I*100+j)) --sat cnf.txt > out_k$j.txt 2>&1 || true ) & done
+          else
+            CBS=(3.3 3.5 3.6 3.7 3.8 3.9 4.0 4.2)
+            for j in $(seq 0 $((N-1))); do CB=${CBS[$(( (I*N+j)%8 ))]}; ( ./ps5 840 $((I*1000+j+17)) $CB cnf.txt > out_p$j.txt 2>/dev/null || true ) & done
+          fi
+          END=$((SECONDS+900))
+          while [ $SECONDS -lt $END ]; do
+            for f in out_k*.txt; do [ -f "$f" ] && grep -q "^s SATISFIABLE" $f && { cp $f sol.txt; break 2; }; done
+            for f in out_p*.txt; do [ -s "$f" ] && { python3 -c "import sys;t=open('$f').read().strip();print('v '+' '.join(str(k+1) if c=='1' else str(-(k+1)) for k,c in enumerate(t))+' 0')" > sol.txt; break 2; }; done
             sleep 1
           done
-          pkill ks || true
+          [ -f sol.txt ] || exit 0
+          pkill ks || true; pkill ps5 || true
           git config user.email a@b.c; git config user.name bot
-          git checkout -b sol-${{ inputs.tag }}-${{ matrix.i }}
+          git checkout -b sol-${{ inputs.tag }}-$I
           git add sol.txt; git commit -qm sol; git push -q origin HEAD
